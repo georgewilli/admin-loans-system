@@ -69,11 +69,6 @@ docker-compose up
 docker-compose up -d
 ```
 
-**Access the application:**
-- Frontend: http://localhost:80
-- Backend API: http://localhost:3000
-- Database: localhost:5432
-
 **Default credentials:**
 - Email: `admin@system.com`
 - Password: `admin123`
