@@ -17,10 +17,10 @@ import {
 import { fetchUtils } from 'react-admin';
 import { Dialog, DialogTitle, DialogContent, DialogActions, Button as MuiButton } from '@mui/material';
 
-// Disbursement List
+// Disbursement List (Read-only - Disbursements are immutable)
 export const DisbursementList = () => (
     <List>
-        <Datagrid>
+        <Datagrid bulkActionButtons={false}>
             <TextField source="id" />
             <TextField source="loanId" label="Loan ID" />
             <NumberField source="amount" options={{ style: 'currency', currency: 'USD' }} />

@@ -1,0 +1,375 @@
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { CreatePaymentDto } from './dto/create-payment.dto';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { AllocationEngine } from './logic/allocation-engine';
+import { LateFeeCalculator } from './logic/late-fee-calculator';
+import { InterestCalculator } from './logic/interest-calculator';
+import { PaymentsRepository } from './payments.repository';
+import { LoansRepository } from 'src/loans/loans.repository';
+import { RepaymentsService } from 'src/repayments/repayments.service';
+import { RollbackService } from 'src/rollback/rollback.service';
+import { TransactionWrapper } from 'src/rollback/helpers/transaction-wrapper.helper';
+import { AccountsService } from 'src/accounts/accounts.service';
+import { AccountType } from '@prisma/client';
+import { LoggerService } from 'src/logger/logger.service';
+
+@Injectable()
+export class PaymentsService {
+  constructor(
+    private prisma: PrismaService,
+    private paymentsRepository: PaymentsRepository,
+    private loansRepository: LoansRepository,
+    private repaymentsService: RepaymentsService,
+    private rollbackService: RollbackService,
+    private accountsService: AccountsService,
+    private logger: LoggerService,
+  ) { }
+
+  async findAll() {
+    return this.paymentsRepository.findAll();
+  }
+
+  async findOne(id: string) {
+    const payment = await this.paymentsRepository.findById(id);
+    if (!payment) throw new BadRequestException('Payment not found');
+    return payment;
+  }
+
+  async processPayment(dto: CreatePaymentDto) {
+    const startTime = Date.now();
+    const paymentId = `pay_${Date.now()}`; // Temporary ID for logging
+
+    try {
+      // Use TransactionWrapper for automatic rollback logging
+      return TransactionWrapper.executeWithRollbackLogging(
+        this.prisma,
+        this.rollbackService,
+        'repayment',
+        async (tx) => {
+          const paidAt = new Date(dto.paymentDate);
+
+          // ========================================
+          // 1) Validate Loan
+          // ========================================
+          const loan = await tx.loan.findUnique({
+            where: { id: dto.loanId },
+            include: { disbursement: true },
+          });
+
+          if (!loan) {
+            throw new BadRequestException('Loan not found');
+          }
+
+          if (loan.status !== 'ACTIVE') {
+            throw new BadRequestException('Loan is not active');
+          }
+
+          if (!loan.disbursement) {
+            throw new BadRequestException('Loan has no disbursement');
+          }
+
+          const outstandingPrincipal = Number(loan.outstandingPrincipal);
+          if (outstandingPrincipal <= 0) {
+            throw new BadRequestException('Loan is already fully repaid');
+          }
+
+          // Validate payment amount
+          if (dto.amount <= 0) {
+            throw new BadRequestException('Payment amount must be positive');
+          }
+
+          // ========================================
+          // 2) Fetch All Data Upfront (No queries in loops!)
+          // ========================================
+
+          // Get all unpaid/partially paid schedules sorted by installment number
+          const pendingSchedules = await tx.repaymentSchedule.findMany({
+            where: {
+              loanId: dto.loanId,
+              status: { in: ['PENDING', 'PARTIALLY_PAID'] },
+            },
+            orderBy: { installmentNumber: 'asc' },
+          });
+
+          if (pendingSchedules.length === 0) {
+            throw new BadRequestException('No pending schedules found for this loan');
+          }
+
+          // Get all completed payments for this loan
+          const allExistingPayments = await tx.payment.findMany({
+            where: {
+              loanId: dto.loanId,
+              status: 'COMPLETED',
+            },
+            orderBy: { paymentDate: 'asc' },
+          });
+
+          // Group payments by schedule ID for quick lookup
+          const paymentsBySchedule = new Map<string, any[]>();
+          for (const payment of allExistingPayments) {
+            if (payment.repaymentScheduleId) {
+              if (!paymentsBySchedule.has(payment.repaymentScheduleId)) {
+                paymentsBySchedule.set(payment.repaymentScheduleId, []);
+              }
+              paymentsBySchedule.get(payment.repaymentScheduleId)!.push(payment);
+            }
+          }
+
+          // Get last payment date for interest calculation
+          const lastPaymentDate = allExistingPayments.length > 0
+            ? new Date(allExistingPayments[allExistingPayments.length - 1].paymentDate)
+            : new Date(loan.disbursement.disbursementDate);
+
+          // Validate payment date
+          if (paidAt < lastPaymentDate) {
+            throw new BadRequestException('Payment date cannot be before last payment');
+          }
+
+          // ========================================
+          // 3) Process Payment Across Schedules
+          // ========================================
+          let remainingAmount = dto.amount;
+          let totalPrincipalPaid = 0;
+          let currentOutstanding = outstandingPrincipal;
+          let lastInterestCalculationDate = lastPaymentDate; // Track actual payment dates for interest periods
+
+          const payments: any[] = [];
+          const transactions: any[] = [];
+
+          for (const schedule of pendingSchedules) {
+            if (remainingAmount <= 0) break;
+
+            // Calculate days since last payment (for interest accrual)
+            const daysSinceLastPayment = Math.floor(
+              (paidAt.getTime() - lastInterestCalculationDate.getTime()) / (1000 * 60 * 60 * 24)
+            );
+
+            // Calculate accrued interest based on current outstanding principal
+            const accruedInterest = InterestCalculator.calculateAccruedInterest(
+              currentOutstanding,
+              Number(loan.interestRate),
+              daysSinceLastPayment,
+            );
+
+            // Calculate late fee based on payment date vs due date
+            const dueDate = new Date(schedule.dueDate);
+            const daysLate = Math.max(
+              0,
+              Math.floor((paidAt.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
+            );
+            const lateFee = LateFeeCalculator.calculateLateFee(daysLate);
+
+            // Get previous payments to this schedule
+            const previousPayments = paymentsBySchedule.get(schedule.id) || [];
+            const alreadyPaidInterest = previousPayments.reduce(
+              (sum, p) => sum + Number(p.interestPaid),
+              0
+            );
+            const alreadyPaidLateFee = previousPayments.reduce(
+              (sum, p) => sum + Number(p.lateFeePaid),
+              0
+            );
+            const alreadyPaidPrincipal = previousPayments.reduce(
+              (sum, p) => sum + Number(p.principalPaid),
+              0
+            );
+
+            // Calculate remaining amounts needed for this installment
+            const remainingInterest = Math.max(0, accruedInterest - alreadyPaidInterest);
+            const remainingLateFee = Math.max(0, lateFee - alreadyPaidLateFee);
+            const remainingPrincipal = Math.max(
+              0,
+              Number(schedule.principalAmount) - alreadyPaidPrincipal
+            );
+
+            const totalRemainingForInstallment =
+              remainingInterest + remainingLateFee + remainingPrincipal;
+
+            // Amount to allocate to this schedule
+            const amountForThisSchedule = Math.min(remainingAmount, totalRemainingForInstallment);
+
+            // Allocate: Interest → Late Fee → Principal
+            const allocation = AllocationEngine.allocate(
+              amountForThisSchedule,
+              remainingInterest,
+              remainingLateFee,
+            );
+
+            // LOG: Payment Allocation Calculation
+            this.logger.logBusinessLogic({
+              service: 'payment',
+              operation: 'processPayment',
+              transactionId: paymentId,
+            }, 'calculatePaymentAllocation', {
+              scheduleInstallment: schedule.installmentNumber,
+              amountAllocated: amountForThisSchedule,
+              interestPaid: allocation.interestPaid,
+              lateFeePaid: allocation.lateFeePaid,
+              principalPaid: allocation.principalPaid,
+              daysLate,
+              accruedInterest: accruedInterest.toFixed(2),
+            });
+
+            // Create Payment record
+            const payment = await tx.payment.create({
+              data: {
+                loanId: loan.id,
+                repaymentScheduleId: schedule.id,
+                amount: amountForThisSchedule,
+                paymentDate: paidAt,
+                principalPaid: allocation.principalPaid,
+                interestPaid: allocation.interestPaid,
+                lateFeePaid: allocation.lateFeePaid,
+                daysLate,
+                status: 'COMPLETED',
+              },
+            });
+
+            // TEST ONLY: Error injection for rollback testing
+            // Set TEST_INJECT_ERROR=PAYMENT environment variable to trigger
+            if (process.env.TEST_INJECT_ERROR === 'PAYMENT') {
+              throw new Error('TEST: Simulated mid-transaction failure in payment');
+            }
+
+            // Create Transaction record
+            const transaction = await tx.transaction.create({
+              data: {
+                type: 'REPAYMENT',
+                refId: payment.id,
+                amount: amountForThisSchedule,
+              },
+            });
+
+            // Link Payment to Transaction
+            await tx.payment.update({
+              where: { id: payment.id },
+              data: { transactionId: transaction.id },
+            });
+
+            payments.push(payment);
+            transactions.push(transaction);
+
+            // Update tracking variables
+            totalPrincipalPaid += allocation.principalPaid;
+            currentOutstanding -= allocation.principalPaid;
+            if (currentOutstanding < 0) currentOutstanding = 0;
+            remainingAmount -= amountForThisSchedule;
+
+            // Update schedule status based on TOTAL principal paid
+            const totalPrincipalPaidToSchedule = alreadyPaidPrincipal + allocation.principalPaid;
+
+            if (totalPrincipalPaidToSchedule >= Number(schedule.principalAmount)) {
+              // Installment fully paid
+              await tx.repaymentSchedule.update({
+                where: { id: schedule.id },
+                data: {
+                  status: 'PAID',
+                  paidDate: paidAt,
+                },
+              })
+              // Update interest calculation date for next iteration
+              // Use actual payment date to ensure interest accrues correctly for early/late payments
+              lastInterestCalculationDate = paidAt;
+              // Continue to next schedule
+            } else {
+              // Installment partially paid - stop processing
+              await tx.repaymentSchedule.update({
+                where: { id: schedule.id },
+                data: {
+                  status: 'PARTIALLY_PAID',
+                },
+              });
+              break; // Stop - next payment will continue this installment
+            }
+          }
+
+          // ========================================
+          // 4) Update Loan
+          // ========================================
+          const newOutstanding = Number(
+            Math.max(0, outstandingPrincipal - totalPrincipalPaid).toFixed(2)
+          );
+
+          await tx.loan.update({
+            where: { id: loan.id },
+            data: {
+              outstandingPrincipal: newOutstanding,
+              status: newOutstanding === 0 ? 'CLOSED' : loan.status,
+            },
+          });
+
+          // ========================================
+          // 5) Update Account Balances
+          // ========================================
+          // Transfer principal from user to platform (only principal, not interest/fees)
+          if (totalPrincipalPaid > 0) {
+            const platformAccount = await tx.account.findFirst({
+              where: { type: AccountType.PLATFORM }
+            });
+
+            if (!platformAccount) {
+              throw new Error('Platform account not found');
+            }
+
+            // Transfer from user to platform (repayment)
+            await this.accountsService.transferFunds(tx, {
+              fromAccountId: loan.accountId,
+              toAccountId: platformAccount.id,
+              amount: totalPrincipalPaid,
+              description: 'Loan repayment',
+              skipBalanceCheck: false, // User must have sufficient balance
+            });
+
+            // LOG: Account Transfer
+            this.logger.info({
+              service: 'payment',
+              operation: 'processPayment',
+              transactionId: paymentId,
+            }, {
+              action: 'accountTransfer',
+              fromAccountId: loan.accountId,
+              toAccountId: platformAccount.id,
+              amount: totalPrincipalPaid,
+            });
+          }
+
+          // LOG: Transaction End
+          const totalDuration = Date.now() - startTime;
+          this.logger.logTransactionEnd({
+            service: 'payment',
+            operation: 'processPayment',
+            transactionId: paymentId,
+            userId: loan.accountId,
+          }, totalDuration, {
+            totalPrincipalPaid,
+            schedulesCovered: payments.length,
+            newOutstandingPrincipal: newOutstanding,
+          });
+
+          return {
+            message: 'Payment processed successfully',
+            payments,
+            transactions,
+            totalAmount: dto.amount,
+            totalPrincipalPaid,
+            schedulesCovered: payments.length,
+            newOutstandingPrincipal: newOutstanding,
+          };
+        });
+    } catch (error) {
+      // LOG: Error with full context
+      const totalDuration = Date.now() - startTime;
+      this.logger.error({
+        service: 'payment',
+        operation: 'processPayment',
+        transactionId: paymentId,
+        metadata: {
+          loanId: dto.loanId,
+          amount: dto.amount,
+          duration: totalDuration,
+        }
+      }, error);
+      throw error;
+    }
+  }
+}

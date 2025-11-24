@@ -5,8 +5,10 @@ import { authProvider } from './authProvider';
 import { LoanList, LoanCreate, LoanShow } from './resources/Loans';
 import { DisbursementList, DisburseDialog } from './resources/Disbursements';
 import { PaymentList, PaymentDialog } from './resources/Payments';
-import { RollbackDialog } from './resources/Rollback';
+import { RollbackDialog, RollbackList } from './resources/Rollback';
 import { AuditLogList } from './resources/AuditLogs';
+import { RepaymentScheduleList } from './resources/Repayments';
+import { AccountList, AccountShow } from './resources/Accounts';
 import { Box, Typography } from '@mui/material';
 
 // Custom App Bar with Action Buttons
@@ -73,9 +75,25 @@ function App() {
         list={PaymentList}
       />
       <Resource
+        name="repayments"
+        list={RepaymentScheduleList}
+        options={{ label: 'Repayment Schedules' }}
+      />
+      <Resource
         name="audit-logs"
         list={AuditLogList}
         options={{ label: 'Audit Logs' }}
+      />
+      <Resource
+        name="rollback"
+        list={RollbackList}
+        options={{ label: 'Rollbacks' }}
+      />
+      <Resource
+        name="accounts"
+        list={AccountList}
+        show={AccountShow}
+        options={{ label: 'Accounts' }}
       />
     </Admin>
   );

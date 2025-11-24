@@ -12,12 +12,13 @@ import {
 import { fetchUtils } from 'react-admin';
 import { Dialog, DialogTitle, DialogContent, DialogActions, Button as MuiButton, Typography, Box } from '@mui/material';
 
-// Payment List
+// Payment List (Read-only - Payments are immutable)
 export const PaymentList = () => (
     <List>
-        <Datagrid>
+        <Datagrid bulkActionButtons={false}>
             <TextField source="id" />
             <TextField source="loanId" label="Loan ID" />
+            <TextField source="repaymentScheduleId" label="Schedule ID" />
             <NumberField source="amount" options={{ style: 'currency', currency: 'USD' }} />
             <NumberField source="principalPaid" label="Principal" options={{ style: 'currency', currency: 'USD' }} />
             <NumberField source="interestPaid" label="Interest" options={{ style: 'currency', currency: 'USD' }} />
@@ -33,7 +34,6 @@ export const PaymentList = () => (
 export const PaymentDialog = () => {
     const [open, setOpen] = React.useState(false);
     const [selectedLoanId, setSelectedLoanId] = React.useState('');
-    const [amount, setAmount] = React.useState('');
     const [date, setDate] = React.useState(new Date().toISOString().split('T')[0]);
     const [breakdown, setBreakdown] = React.useState<any>(null);
     const notify = useNotify();
@@ -53,7 +53,6 @@ export const PaymentDialog = () => {
                 method: 'POST',
                 body: JSON.stringify({
                     loanId: selectedLoanId,
-                    amount: parseFloat(amount),
                     paymentDate: date,
                 }),
                 headers: new Headers({
@@ -74,7 +73,6 @@ export const PaymentDialog = () => {
         setOpen(false);
         setBreakdown(null);
         setSelectedLoanId('');
-        setAmount('');
     };
 
     return (
@@ -101,15 +99,6 @@ export const PaymentDialog = () => {
                             ))}
                         </select>
 
-                        <label>Payment Amount:</label>
-                        <input
-                            type="number"
-                            value={amount}
-                            onChange={(e) => setAmount(e.target.value)}
-                            style={{ width: '100%', padding: 8, marginBottom: 16 }}
-                            step="0.01"
-                        />
-
                         <label>Payment Date:</label>
                         <input
                             type="date"
@@ -118,17 +107,38 @@ export const PaymentDialog = () => {
                             style={{ width: '100%', padding: 8, marginBottom: 16 }}
                         />
 
+                        <Box sx={{ mt: 2, p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
+                            <Typography variant="body2" color="text.secondary">
+                                ℹ️ Payment amount will be automatically calculated based on the payment date.
+                                The system will calculate all interest, late fees, and principal due up to this date.
+                            </Typography>
+                        </Box>
+
                         {breakdown && (
                             <Box sx={{ mt: 2, p: 2, bgcolor: 'success.light', borderRadius: 1 }}>
                                 <Typography variant="h6">Payment Breakdown</Typography>
-                                <Typography>Interest Paid: ${breakdown.accruedInterest}</Typography>
-                                <Typography>Late Fee: ${breakdown.lateFee}</Typography>
-                                <Typography>Principal Paid: ${breakdown.payment.principalPaid}</Typography>
-                                <Typography>Days Since Last Payment: {breakdown.daysSinceLastPayment}</Typography>
-                                <Typography>Days Late: {breakdown.daysLate}</Typography>
-                                <Typography variant="h6" sx={{ mt: 1 }}>
-                                    New Outstanding: ${breakdown.newOutstandingPrincipal}
+                                <Typography><strong>Total Amount Charged:</strong> ${breakdown.totalAmountCharged?.toFixed(2)}</Typography>
+                                <Typography><strong>Schedules Covered:</strong> {breakdown.schedulesCovered}</Typography>
+                                <Typography><strong>Total Principal Paid:</strong> ${breakdown.totalPrincipalPaid?.toFixed(2)}</Typography>
+                                <Typography variant="h6" sx={{ mt: 2 }}>
+                                    New Outstanding: ${breakdown.newOutstandingPrincipal?.toFixed(2)}
                                 </Typography>
+
+                                {breakdown.payments && breakdown.payments.length > 0 && (
+                                    <Box sx={{ mt: 2 }}>
+                                        <Typography variant="subtitle1" sx={{ mb: 1 }}><strong>Payment Details:</strong></Typography>
+                                        {breakdown.payments.map((payment: any, index: number) => (
+                                            <Box key={index} sx={{ mb: 1, p: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
+                                                <Typography variant="body2">Schedule #{index + 1}:</Typography>
+                                                <Typography variant="body2">• Amount: ${payment.amount}</Typography>
+                                                <Typography variant="body2">• Interest: ${payment.interestPaid}</Typography>
+                                                <Typography variant="body2">• Late Fee: ${payment.lateFeePaid}</Typography>
+                                                <Typography variant="body2">• Principal: ${payment.principalPaid}</Typography>
+                                                <Typography variant="body2">• Days Late: {payment.daysLate}</Typography>
+                                            </Box>
+                                        ))}
+                                    </Box>
+                                )}
                             </Box>
                         )}
                     </div>
@@ -136,7 +146,12 @@ export const PaymentDialog = () => {
                 <DialogActions>
                     <MuiButton onClick={handleClose}>Close</MuiButton>
                     {!breakdown && (
-                        <MuiButton onClick={handlePayment} variant="contained" color="primary">
+                        <MuiButton
+                            onClick={handlePayment}
+                            variant="contained"
+                            color="primary"
+                            disabled={!selectedLoanId || !date}
+                        >
                             Process Payment
                         </MuiButton>
                     )}

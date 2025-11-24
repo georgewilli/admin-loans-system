@@ -16,6 +16,9 @@ import {
     Button,
     useNotify,
     useRefresh,
+    ReferenceInput,
+    SelectInput,
+    ReferenceField,
 } from 'react-admin';
 import { fetchUtils } from 'react-admin';
 
@@ -24,7 +27,9 @@ export const LoanList = () => (
     <List>
         <Datagrid rowClick="show">
             <TextField source="id" />
-            <TextField source="borrowerId" label="Borrower ID" />
+            <ReferenceField source="accountId" reference="accounts" label="Account">
+                <TextField source="id" />
+            </ReferenceField>
             <NumberField source="amount" options={{ style: 'currency', currency: 'USD' }} />
             <NumberField source="interestRate" label="Interest Rate %" />
             <NumberField source="tenor" label="Tenor (months)" />
@@ -39,7 +44,9 @@ export const LoanList = () => (
 export const LoanCreate = () => (
     <Create>
         <SimpleForm>
-            <TextInput source="borrowerId" label="Borrower ID" required />
+            <ReferenceInput source="accountId" reference="accounts" label="Account">
+                <SelectInput optionText={(record) => `${record.user?.name || record.id} (Balance: $${record.balance})`} />
+            </ReferenceInput>
             <NumberInput source="amount" required />
             <NumberInput source="interestRate" label="Interest Rate (%)" required />
             <NumberInput source="tenor" label="Tenor (months)" required />
@@ -88,7 +95,9 @@ export const LoanShow = () => (
     <Show>
         <SimpleShowLayout>
             <TextField source="id" />
-            <TextField source="borrowerId" label="Borrower ID" />
+            <ReferenceField source="accountId" reference="accounts" label="Account">
+                <TextField source="id" />
+            </ReferenceField>
             <NumberField source="amount" options={{ style: 'currency', currency: 'USD' }} />
             <NumberField source="interestRate" label="Interest Rate %" />
             <NumberField source="tenor" label="Tenor (months)" />

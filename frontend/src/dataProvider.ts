@@ -61,13 +61,24 @@ export const dataProvider: DataProvider = {
             data: json,
         })),
 
-    update: (resource, params) =>
-        httpClient(`${apiUrl}/${resource}/${params.id}`, {
+    update: (resource, params) => {
+        // Payments, disbursements, and repayments are immutable
+        if (resource === 'payments' || resource === 'disbursements' || resource === 'repayments') {
+            return Promise.reject(new Error(`${resource} are immutable and cannot be updated`));
+        }
+
+        return httpClient(`${apiUrl}/${resource}/${params.id}`, {
             method: 'PATCH',
             body: JSON.stringify(params.data),
-        }).then(({ json }) => ({ data: json })),
+        }).then(({ json }) => ({ data: json }));
+    },
 
     updateMany: (resource, params) => {
+        // Payments, disbursements, and repayments are immutable
+        if (resource === 'payments' || resource === 'disbursements' || resource === 'repayments') {
+            return Promise.reject(new Error(`${resource} are immutable and cannot be updated`));
+        }
+
         return Promise.all(
             params.ids.map(id =>
                 httpClient(`${apiUrl}/${resource}/${id}`, {
@@ -78,12 +89,23 @@ export const dataProvider: DataProvider = {
         ).then(responses => ({ data: responses.map(({ json }) => json.id) }));
     },
 
-    delete: (resource, params) =>
-        httpClient(`${apiUrl}/${resource}/${params.id}`, {
+    delete: (resource, params) => {
+        // Payments, disbursements, and repayments are immutable
+        if (resource === 'payments' || resource === 'disbursements' || resource === 'repayments') {
+            return Promise.reject(new Error(`${resource} are immutable and cannot be deleted`));
+        }
+
+        return httpClient(`${apiUrl}/${resource}/${params.id}`, {
             method: 'DELETE',
-        }).then(({ json }) => ({ data: json })),
+        }).then(({ json }) => ({ data: json }));
+    },
 
     deleteMany: (resource, params) => {
+        // Payments, disbursements, and repayments are immutable
+        if (resource === 'payments' || resource === 'disbursements' || resource === 'repayments') {
+            return Promise.reject(new Error(`${resource} are immutable and cannot be deleted`));
+        }
+
         return Promise.all(
             params.ids.map(id =>
                 httpClient(`${apiUrl}/${resource}/${id}`, {
