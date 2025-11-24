@@ -17,6 +17,7 @@ import {
   Transaction,
 } from '@prisma/client';
 import { LoggerService } from 'src/logger/logger.service';
+import { PAYMENT_CONSTANTS } from 'src/constants';
 
 @Injectable()
 export class PaymentsService {
@@ -36,6 +37,37 @@ export class PaymentsService {
 
   async findOne(id: string) {
     return this.paymentsRepository.findById(id);
+  }
+
+  /**
+   * Calculate the number of days between two dates
+   */
+  private calculateDaysBetween(fromDate: Date, toDate: Date): number {
+    const timeDiff = toDate.getTime() - fromDate.getTime();
+    return Math.floor(timeDiff / PAYMENT_CONSTANTS.MILLISECONDS_PER_DAY);
+  }
+
+  /**
+   * Calculate accrued interest on outstanding principal
+   * 
+   * Formula: Principal * Daily Rate * Days Since Last Payment
+   * Daily Rate = (Annual Rate / 100) / 365
+   */
+  private calculateAccruedInterest(
+    outstandingPrincipal: number,
+    annualInterestRate: number,
+    daysSinceLastPayment: number,
+  ): number {
+    const annualRateDecimal = annualInterestRate / 100;
+    const dailyRate = annualRateDecimal / PAYMENT_CONSTANTS.DAYS_PER_YEAR;
+    return outstandingPrincipal * dailyRate * daysSinceLastPayment;
+  }
+
+  /**
+   * Calculate late fee for a repayment based on days late
+   */
+  private calculateLateFee(daysLate: number): number {
+    return daysLate > 0 ? PAYMENT_CONSTANTS.FLAT_LATE_FEE : 0;
   }
 
   /**
@@ -120,33 +152,19 @@ export class PaymentsService {
           // ========================================
           // STEP 3: Calculate Total Accrued Interest
           // ========================================
-          const daysSinceLastPayment = Math.floor(
-            (paymentDate.getTime() - lastPaymentDate.getTime()) /
-            (1000 * 60 * 60 * 24),
+          const daysSinceLastPayment = this.calculateDaysBetween(
+            lastPaymentDate,
+            paymentDate,
           );
 
-          const annualRate = Number(loan.interestRate) / 100; // Convert to decimal
-          const dailyRate = annualRate / 365;
-          const totalAccruedInterest =
-            outstandingPrincipal * dailyRate * daysSinceLastPayment;
-
-          this.logger.logBusinessLogic(
-            {
-              service: 'payment',
-              operation: 'processPayment',
-              transactionId: paymentId,
-            },
-            'calculateAccruedInterest',
-            {
-              daysSinceLastPayment,
-              outstandingPrincipal,
-              annualRate: loan.interestRate,
-              totalAccruedInterest: totalAccruedInterest.toFixed(2),
-            },
+          const totalAccruedInterest = this.calculateAccruedInterest(
+            outstandingPrincipal,
+            Number(loan.interestRate),
+            daysSinceLastPayment,
           );
 
           // ========================================
-          // STEP 4: Get Due Repayments
+          // STEP 4: Get Due Repayments & Calculate Fees
           // ========================================
           const allPendingRepayments = await tx.repaymentSchedule.findMany({
             where: {
@@ -161,202 +179,200 @@ export class PaymentsService {
             orderBy: { installmentNumber: 'asc' },
           });
 
-          if (allPendingRepayments.length === 0) {
-            throw new BadRequestException('No pending schedules found');
-          }
-
-          // Determine which repayments are due (due date <= payment date)
+          // Filter due repayments
           const dueRepayments = allPendingRepayments.filter(
             (rep) => new Date(rep.dueDate) <= paymentDate,
           );
 
-          if (dueRepayments.length === 0) {
-            throw new BadRequestException(
-              'No repayments are due yet at this payment date',
-            );
-          }
+          // Calculate total late fees
+          let totalLateFees = 0;
+          const repaymentLateFees = new Map<string, number>();
 
-          // ========================================
-          // STEP 5: Calculate Late Fees
-          // ========================================
-          const FLAT_LATE_FEE = 25; // $25 flat fee per late repayment
-
-          // ========================================
-          // STEP 6: Process Each Due Repayment
-          // ========================================
-
-          let remainingAccruedInterest = totalAccruedInterest;
-          const payments: Payment[] = [];
-          const transactions: Transaction[] = [];
-          let totalPrincipalPaid = 0;
-          let totalLateFee = 0;
-
-          for (const repayment of dueRepayments) {
-            // Calculate late fee for this repayment
-            const dueDate = new Date(repayment.dueDate);
+          for (const rep of dueRepayments) {
+            const dueDate = new Date(rep.dueDate);
             const daysLate = Math.max(
               0,
-              Math.floor(
-                (paymentDate.getTime() - dueDate.getTime()) /
-                (1000 * 60 * 60 * 24),
-              ),
-            );
-            const lateFee = daysLate > 0 ? FLAT_LATE_FEE : 0;
-            totalLateFee += lateFee;
-
-            const principalAmount = Number(repayment.principalAmount);
-
-            // Interest for this repayment (proportional to principal)
-            const interestForThisRepayment = Math.min(
-              remainingAccruedInterest,
-              (principalAmount / outstandingPrincipal) * totalAccruedInterest,
+              this.calculateDaysBetween(dueDate, paymentDate),
             );
 
-            const paymentAmount =
-              principalAmount + lateFee + interestForThisRepayment;
-
-            // Create payment record
-            const payment = await tx.payment.create({
-              data: {
-                loanId: loan.id,
-                repaymentScheduleId: repayment.id,
-                amount: paymentAmount,
-                paymentDate: paymentDate,
-                principalPaid: principalAmount,
-                interestPaid: interestForThisRepayment,
-                lateFeePaid: lateFee,
-                daysLate: daysLate,
-                status: PaymentStatus.COMPLETED,
-              },
-            });
-
-            // Create transaction record
-            const transaction = await tx.transaction.create({
-              data: {
-                type: TransactionType.REPAYMENT,
-                refId: payment.id,
-                amount: paymentAmount,
-              },
-            });
-
-            // Link payment to transaction
-            await tx.payment.update({
-              where: { id: payment.id },
-              data: { transactionId: transaction.id },
-            });
-
-            // Transfer money from user to platform
-            await this.accountsService.transferFromBorrower(
-              tx,
-              loan.accountId,
-              paymentAmount,
-              `Repayment for installment ${repayment.installmentNumber}`,
-            );
-
-            // Mark repayment as PAID
-            await tx.repaymentSchedule.update({
-              where: { id: repayment.id },
-              data: {
-                status: RepaymentScheduleStatus.PAID,
-                paidDate: paymentDate,
-              },
-            });
-
-            payments.push(payment);
-            transactions.push(transaction);
-            totalPrincipalPaid += principalAmount;
-            remainingAccruedInterest -= interestForThisRepayment;
-
-            this.logger.logBusinessLogic(
-              {
-                service: 'payment',
-                operation: 'processPayment',
-                transactionId: paymentId,
-              },
-              'processRepayment',
-              {
-                installmentNumber: repayment.installmentNumber,
-                principalPaid: principalAmount,
-                interestPaid: interestForThisRepayment.toFixed(2),
-                lateFeePaid: lateFee,
-                totalAmount: paymentAmount.toFixed(2),
-              },
-            );
+            // Apply grace period
+            if (daysLate > PAYMENT_CONSTANTS.GRACE_PERIOD_DAYS) {
+              const fee = PAYMENT_CONSTANTS.FLAT_LATE_FEE;
+              totalLateFees += fee;
+              repaymentLateFees.set(rep.id, fee);
+            } else {
+              repaymentLateFees.set(rep.id, 0);
+            }
           }
 
           // ========================================
-          // STEP 8: Handle Remaining Accrued Interest (Partial Payment)
+          // STEP 5: Determine Payment Amount & Allocation (Waterfall)
           // ========================================
-          if (remainingAccruedInterest > 0.01) {
-            // Only if > 1 cent
-            const nextRepayment = allPendingRepayments.find(
-              (rep) => !dueRepayments.some((due) => due.id === rep.id),
-            );
 
-            if (nextRepayment) {
-              // Create partial payment for next repayment
+          // Calculate total due (Principal + Interest + Fees)
+          const totalPrincipalDue = dueRepayments.reduce(
+            (sum, rep) => sum + Number(rep.principalAmount),
+            0
+          );
+          const totalDue = totalPrincipalDue + totalAccruedInterest + totalLateFees;
+
+          // Use provided amount or default to total due
+          const paymentAmount = dto.amount ? Number(dto.amount) : totalDue;
+
+          // 1. Pay Interest First
+          const interestPaid = Math.min(paymentAmount, totalAccruedInterest);
+          let remainingForFeesAndPrincipal = paymentAmount - interestPaid;
+
+          // 2. Pay Late Fees Second
+          const feesPaid = Math.min(remainingForFeesAndPrincipal, totalLateFees);
+          let remainingForPrincipal = remainingForFeesAndPrincipal - feesPaid;
+
+          // 3. Pay Principal Last
+          const principalPaid = Math.min(remainingForPrincipal, totalPrincipalDue);
+
+          // ========================================
+          // STEP 6: Apply Payments to Schedules
+          // ========================================
+          const payments: Payment[] = [];
+          const transactions: Transaction[] = [];
+
+          // Trackers for distribution
+          let distributedInterest = 0;
+          let distributedFees = 0;
+          let distributedPrincipal = 0;
+
+          // We iterate through due repayments to allocate the funds.
+          // If we have money left after due repayments (unlikely if logic is correct unless overpayment), 
+          // it stays as "principalPaid" but might need to be applied to future schedules?
+          // For simplicity, we strictly apply to DUE schedules first. 
+          // If there is excess principal (overpayment), we apply it to the next pending schedule.
+
+          // Combine due repayments with future repayments if we have excess funds?
+          // Requirement says "Partial payments are allowed", doesn't explicitly say "Overpayments".
+          // We'll stick to applying to due repayments first.
+
+          const schedulesToPay = [...dueRepayments];
+
+          // If we have more principal to pay than what is due, add next schedules
+          if (principalPaid > totalPrincipalDue) {
+            const futureRepayments = allPendingRepayments.filter(
+              rep => !dueRepayments.includes(rep)
+            );
+            schedulesToPay.push(...futureRepayments);
+          }
+
+          for (let i = 0; i < schedulesToPay.length; i++) {
+            const rep = schedulesToPay[i];
+            const isLast = i === schedulesToPay.length - 1;
+
+            // Allocation for this schedule
+            let repInterest = 0;
+            let repFee = 0;
+            let repPrincipal = 0;
+
+            // Distribute Interest (attach to first schedule or spread? Spreading is cleaner for data)
+            // Simple approach: Attach all interest to the first due schedule, or spread proportionally.
+            // Spreading proportionally to principal amount is fair.
+            if (interestPaid > distributedInterest) {
+              const remainingInterest = interestPaid - distributedInterest;
+              if (isLast) {
+                repInterest = remainingInterest;
+              } else {
+                // Proportional share
+                const ratio = Number(rep.principalAmount) / totalPrincipalDue; // Approximation
+                // Fallback to simple "fill up" if ratio is weird
+                repInterest = Math.min(remainingInterest, interestPaid * (Number(rep.principalAmount) / totalPrincipalDue) || remainingInterest);
+              }
+              distributedInterest += repInterest;
+            }
+
+            // Distribute Fees (Specific to schedule)
+            const feeForThisRep = repaymentLateFees.get(rep.id) || 0;
+            if (feeForThisRep > 0 && distributedFees < feesPaid) {
+              const feeToPay = Math.min(feeForThisRep, feesPaid - distributedFees);
+              repFee = feeToPay;
+              distributedFees += repFee;
+            }
+
+            // Distribute Principal (Waterfall: fill oldest first)
+            if (distributedPrincipal < principalPaid) {
+              const repPrincipalBalance = Number(rep.principalAmount); // In a real system, check 'paidAmount' if partially paid before
+              // Assuming 'principalAmount' is the full amount. If it was partially paid, we need to know how much is left.
+              // The schema has 'status', but doesn't track 'outstandingPrincipal' per schedule explicitly other than via payments.
+              // We'll assume 'principalAmount' is the target.
+              // TODO: If previously partially paid, we need to deduct that.
+              // For simplicity/MVP, assuming we pay full 'principalAmount' or whatever is left.
+
+              const amountToPay = Math.min(
+                repPrincipalBalance,
+                principalPaid - distributedPrincipal
+              );
+              repPrincipal = amountToPay;
+              distributedPrincipal += repPrincipal;
+            }
+
+            const repTotal = repInterest + repFee + repPrincipal;
+
+            if (repTotal > 0) {
+              // Create Payment
               const payment = await tx.payment.create({
                 data: {
                   loanId: loan.id,
-                  repaymentScheduleId: nextRepayment.id,
-                  amount: remainingAccruedInterest,
+                  repaymentScheduleId: rep.id,
+                  amount: repTotal,
                   paymentDate: paymentDate,
-                  principalPaid: 0, // Only interest, no principal
-                  interestPaid: remainingAccruedInterest,
-                  lateFeePaid: 0,
-                  daysLate: 0,
+                  principalPaid: repPrincipal,
+                  interestPaid: repInterest,
+                  lateFeePaid: repFee,
+                  daysLate: (repaymentLateFees.get(rep.id) || 0) > 0 ? this.calculateDaysBetween(new Date(rep.dueDate), paymentDate) : 0,
                   status: PaymentStatus.COMPLETED,
                 },
               });
 
+              // Create Transaction
               const transaction = await tx.transaction.create({
                 data: {
                   type: TransactionType.REPAYMENT,
                   refId: payment.id,
-                  amount: remainingAccruedInterest,
+                  amount: repTotal,
                 },
               });
 
+              // Link
               await tx.payment.update({
                 where: { id: payment.id },
                 data: { transactionId: transaction.id },
               });
 
-              await this.accountsService.transferFromBorrower(
-                tx,
-                loan.accountId,
-                remainingAccruedInterest,
-                `Partial interest payment for installment ${nextRepayment.installmentNumber}`,
-              );
+              // Update Schedule Status
+              // If principal is fully paid, mark as PAID (assuming interest/fees are covered or don't block status)
+              // Usually status depends on Principal.
+              const isPrincipalFullyPaid = Math.abs(repPrincipal - Number(rep.principalAmount)) < 0.01;
 
-              // Mark next repayment as PARTIALLY_PAID
               await tx.repaymentSchedule.update({
-                where: { id: nextRepayment.id },
-                data: { status: RepaymentScheduleStatus.PARTIALLY_PAID },
+                where: { id: rep.id },
+                data: {
+                  status: isPrincipalFullyPaid ? RepaymentScheduleStatus.PAID : RepaymentScheduleStatus.PARTIALLY_PAID,
+                  paidDate: isPrincipalFullyPaid ? paymentDate : null,
+                },
               });
 
               payments.push(payment);
               transactions.push(transaction);
-
-              this.logger.logBusinessLogic(
-                {
-                  service: 'payment',
-                  operation: 'processPayment',
-                  transactionId: paymentId,
-                },
-                'partialPayment',
-                {
-                  installmentNumber: nextRepayment.installmentNumber,
-                  remainingInterest: remainingAccruedInterest.toFixed(2),
-                },
-              );
             }
           }
 
-          // ========================================
-          // STEP 9: Update Loan Outstanding Principal
-          // ========================================
-          const newOutstanding = outstandingPrincipal - totalPrincipalPaid;
+          // Transfer Money (Total)
+          await this.accountsService.transferFromBorrower(
+            tx,
+            loan.accountId,
+            paymentAmount,
+            `Repayment (Int: ${interestPaid}, Fee: ${feesPaid}, Prin: ${principalPaid})`
+          );
+
+          // Update Loan Outstanding
+          // We only reduce by principal paid
+          const newOutstanding = outstandingPrincipal - principalPaid;
           await tx.loan.update({
             where: { id: loan.id },
             data: {
@@ -387,9 +403,9 @@ export class PaymentsService {
             totalDuration,
             {
               totalAmountCharged: totalAmountCharged.toFixed(2),
-              totalPrincipalPaid,
+              totalPrincipalPaid: principalPaid,
               totalInterestPaid: totalAccruedInterest.toFixed(2),
-              totalLateFee,
+              totalLateFee: totalLateFees,
               schedulesCovered: dueRepayments.length,
               newOutstanding,
             },
@@ -399,9 +415,9 @@ export class PaymentsService {
             payments,
             transactions,
             totalAmountCharged,
-            totalPrincipalPaid,
+            totalPrincipalPaid: principalPaid,
             totalInterestPaid: totalAccruedInterest,
-            totalLateFee,
+            totalLateFee: totalLateFees,
             schedulesCovered: dueRepayments.length,
             newOutstandingPrincipal: newOutstanding,
           };

@@ -35,6 +35,7 @@ export const PaymentDialog = () => {
     const [open, setOpen] = React.useState(false);
     const [selectedLoanId, setSelectedLoanId] = React.useState('');
     const [date, setDate] = React.useState(new Date().toISOString().split('T')[0]);
+    const [amount, setAmount] = React.useState('');
     const [breakdown, setBreakdown] = React.useState<any>(null);
     const notify = useNotify();
     const refresh = useRefresh();
@@ -48,13 +49,20 @@ export const PaymentDialog = () => {
         try {
             const auth = JSON.parse(localStorage.getItem('auth') || '{}');
             const token = auth.access_token;
+            const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:3000';
 
-            const response = await fetchUtils.fetchJson('http://localhost:3000/payments', {
+            const payload: any = {
+                loanId: selectedLoanId,
+                paymentDate: date,
+            };
+
+            if (amount) {
+                payload.amount = parseFloat(amount);
+            }
+
+            const response = await fetchUtils.fetchJson(`${apiUrl}/payments`, {
                 method: 'POST',
-                body: JSON.stringify({
-                    loanId: selectedLoanId,
-                    paymentDate: date,
-                }),
+                body: JSON.stringify(payload),
                 headers: new Headers({
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${token}`,
@@ -73,6 +81,7 @@ export const PaymentDialog = () => {
         setOpen(false);
         setBreakdown(null);
         setSelectedLoanId('');
+        setAmount('');
     };
 
     return (
@@ -109,8 +118,8 @@ export const PaymentDialog = () => {
 
                         <Box sx={{ mt: 2, p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
                             <Typography variant="body2" color="text.secondary">
-                                ℹ️ Payment amount will be automatically calculated based on the payment date.
-                                The system will calculate all interest, late fees, and principal due up to this date.
+                                ℹ️ Payment amount will be automatically calculated based on the payment date if left empty.
+                                If an amount is provided, it will be allocated to Interest first, then Late Fees, then Principal.
                             </Typography>
                         </Box>
 

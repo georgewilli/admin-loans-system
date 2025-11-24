@@ -50,7 +50,7 @@ export const DisburseDialog = () => {
             const auth = JSON.parse(localStorage.getItem('auth') || '{}');
             const token = auth.access_token;
 
-            await fetchUtils.fetchJson(`http://localhost:3000/disbursements/${selectedLoanId}/disburse`, {
+            await fetchUtils.fetchJson(`${process.env.REACT_APP_API_URL}/disbursements/${selectedLoanId}/disburse`, {
                 method: 'POST',
                 body: JSON.stringify({
                     amount: parseFloat(amount),

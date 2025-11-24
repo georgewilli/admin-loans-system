@@ -4,7 +4,7 @@ import { Account, AccountType } from '@prisma/client';
 
 @Injectable()
 export class AccountsRepository {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async findAll() {
     return this.prisma.account.findMany({
@@ -13,6 +13,9 @@ export class AccountsRepository {
       },
       orderBy: {
         createdAt: 'desc',
+      },
+      where: {
+        type: AccountType.USER,
       },
     });
   }

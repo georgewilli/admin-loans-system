@@ -81,6 +81,7 @@ export class RollbackService {
   async rollbackDisbursement(
     disbursementId: string,
     adminUserId: string,
+    reason: string,
   ): Promise<void> {
     return this.prisma.$transaction(async (tx) => {
       const disbursement = await tx.disbursement.findUnique({
@@ -100,6 +101,20 @@ export class RollbackService {
 
       if (disbursement.rolledBackAt) {
         throw new BadRequestException('Disbursement already rolled back');
+      }
+
+      // Check for existing completed payments
+      const existingPayments = await tx.payment.findFirst({
+        where: {
+          loanId: disbursement.loanId,
+          status: PaymentStatus.COMPLETED,
+        },
+      });
+
+      if (existingPayments) {
+        throw new BadRequestException(
+          'Cannot rollback disbursement because the loan has active payments. Rollback payments first.',
+        );
       }
 
       const platformAccount = await tx.account.findFirst({
@@ -140,7 +155,7 @@ export class RollbackService {
         {
           transactionId: disbursement.transactionId || 'N/A',
           originalOperation: OperationType.DISBURSEMENT,
-          rollbackReason: 'Manual rollback by admin',
+          rollbackReason: reason || 'Manual rollback by admin',
           compensatingActions: {
             moneyTransferred: true,
             from: disbursement.loan.accountId,
@@ -155,7 +170,7 @@ export class RollbackService {
       await this.auditService.logAudit({
         transactionId: disbursement.transactionId || disbursementId,
         operation: 'MANUAL_ROLLBACK_DISBURSEMENT',
-        metadata: { disbursementId, loanId: disbursement.loanId, adminUserId },
+        metadata: { disbursementId, loanId: disbursement.loanId, adminUserId, reason },
       });
     });
   }
@@ -163,7 +178,11 @@ export class RollbackService {
   /**
    * Manually rollback a payment (Admin action)
    */
-  async rollbackPayment(paymentId: string, adminUserId: string): Promise<void> {
+  async rollbackPayment(
+    paymentId: string,
+    adminUserId: string,
+    reason: string,
+  ): Promise<void> {
     return this.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.findUnique({
         where: { id: paymentId },
@@ -219,7 +238,7 @@ export class RollbackService {
       if (payment.repaymentScheduleId) {
         await tx.repaymentSchedule.update({
           where: { id: payment.repaymentScheduleId },
-          data: { status: RepaymentScheduleStatus.PENDING, paidDate: null },
+          data: { status: RepaymentScheduleStatus.ROLLED_BACK, paidDate: null },
         });
       }
 
@@ -227,7 +246,7 @@ export class RollbackService {
         {
           transactionId: payment.transactionId || 'N/A',
           originalOperation: OperationType.REPAYMENT,
-          rollbackReason: 'Manual rollback by admin',
+          rollbackReason: reason || 'Manual rollback by admin',
           compensatingActions: {
             moneyTransferred: principalPaid > 0,
             from: platformAccount.id,
@@ -247,6 +266,7 @@ export class RollbackService {
           loanId: payment.loanId,
           principalPaid,
           adminUserId,
+          reason,
         },
       });
     });

@@ -5,13 +5,15 @@ import {
     TextField,
     DateField,
     FunctionField,
-    useNotify,
-    useRefresh,
     TopToolbar,
     FilterButton,
-    TextInput
+    useNotify,
+    useRefresh,
+    useDataProvider
 } from 'react-admin';
 import {
+    Chip,
+    Box,
     Dialog,
     DialogTitle,
     DialogContent,
@@ -22,72 +24,45 @@ import {
     InputLabel,
     Select,
     MenuItem,
-    Chip,
-    Box
 } from '@mui/material';
-
-// Rollback List View
-export const RollbackList = () => {
-    const filters = [
-        <TextInput key="transactionId" label="Search Transaction ID" source="transactionId" alwaysOn />,
-        <TextInput key="operation" label="Operation" source="operation" />,
-    ];
-
-    const ListActions = () => (
-        <TopToolbar>
-            <FilterButton />
-            <RollbackDialog />
-        </TopToolbar>
-    );
-
-    return (
-        <List filters={filters} actions={<ListActions />} perPage={25}>
-            <Datagrid bulkActionButtons={false}>
-                <TextField source="transactionId" label="Transaction ID" />
-                <FunctionField
-                    label="Operation"
-                    render={(record: any) => (
-                        <Chip
-                            label={record.originalOperation}
-                            color={record.originalOperation === 'disbursement' ? 'primary' : 'secondary'}
-                            size="small"
-                        />
-                    )}
-                />
-                <TextField source="rollbackReason" label="Reason" />
-                <TextField source="rolledBackBy" label="Rolled Back By" />
-                <DateField source="rollbackTimestamp" label="Rollback Date" showTime />
-                <FunctionField
-                    label="Error Details"
-                    render={(record: any) => (
-                        record.errorDetails ? (
-                            <Box sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {record.errorDetails.message || 'Error occurred'}
-                            </Box>
-                        ) : (
-                            <span>-</span>
-                        )
-                    )}
-                />
-            </Datagrid>
-        </List>
-    );
-};
 
 // Rollback Dialog for Creating New Rollbacks
 export const RollbackDialog = () => {
     const [open, setOpen] = React.useState(false);
     const [operationType, setOperationType] = React.useState<'disbursement' | 'payment'>('disbursement');
     const [recordId, setRecordId] = React.useState('');
+    const [reason, setReason] = React.useState('');
+    const [options, setOptions] = React.useState<any[]>([]);
     const notify = useNotify();
     const refresh = useRefresh();
+    const dataProvider = useDataProvider();
+
+    React.useEffect(() => {
+        if (open) {
+            const resource = operationType === 'disbursement' ? 'disbursements' : 'payments';
+            dataProvider.getList(resource, {
+                pagination: { page: 1, perPage: 100 },
+                sort: { field: 'createdAt', order: 'DESC' },
+                filter: {}
+            })
+                .then(({ data }) => {
+                    // Filter out records that are already rolled back
+                    const filteredData = data.filter((item: any) => item.status !== 'ROLLED_BACK');
+                    setOptions(filteredData);
+                })
+                .catch(error => {
+                    console.error(error);
+                    notify('Error fetching options', { type: 'error' });
+                });
+        }
+    }, [open, operationType, dataProvider, notify]);
 
     const handleRollback = async () => {
         try {
             const auth = JSON.parse(localStorage.getItem('auth') || '{}');
             const token = auth.access_token;
 
-            const endpoint = `http://localhost:3000/rollback/${operationType}/${recordId}`;
+            const endpoint = `${process.env.REACT_APP_API_URL}/rollback/${operationType}/${recordId}`;
 
             const response = await fetch(endpoint, {
                 method: 'POST',
@@ -95,6 +70,7 @@ export const RollbackDialog = () => {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${token}`,
                 },
+                body: JSON.stringify({ reason }),
             });
 
             if (!response.ok) {
@@ -106,6 +82,7 @@ export const RollbackDialog = () => {
             notify(result.message || `${operationType} rolled back successfully`);
             setOpen(false);
             setRecordId('');
+            setReason('');
             setOperationType('disbursement');
             refresh();
         } catch (error: any) {
@@ -127,19 +104,44 @@ export const RollbackDialog = () => {
                         <Select
                             value={operationType}
                             label="Operation Type"
-                            onChange={(e) => setOperationType(e.target.value as 'disbursement' | 'payment')}
+                            onChange={(e) => {
+                                setOperationType(e.target.value as 'disbursement' | 'payment');
+                                setRecordId('');
+                            }}
                         >
                             <MenuItem value="disbursement">Disbursement</MenuItem>
                             <MenuItem value="payment">Payment</MenuItem>
                         </Select>
                     </FormControl>
+
+                    <FormControl fullWidth margin="normal">
+                        <InputLabel>{operationType === 'disbursement' ? 'Select Disbursement' : 'Select Payment'}</InputLabel>
+                        <Select
+                            value={recordId}
+                            label={operationType === 'disbursement' ? 'Select Disbursement' : 'Select Payment'}
+                            onChange={(e) => setRecordId(e.target.value)}
+                        >
+                            {options.map((option) => (
+                                <MenuItem key={option.id} value={option.id}>
+                                    {operationType === 'disbursement'
+                                        ? `ID: ${option.id} - Amount: ${option.amount} - Date: ${new Date(option.disbursedAt || option.createdAt).toLocaleDateString()}`
+                                        : `ID: ${option.id} - Amount: ${option.amount} - Date: ${new Date(option.paymentDate || option.createdAt).toLocaleDateString()}`
+                                    }
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+
                     <MuiTextField
                         fullWidth
-                        label={operationType === 'disbursement' ? 'Disbursement ID' : 'Payment ID'}
-                        value={recordId}
-                        onChange={(e) => setRecordId(e.target.value)}
+                        label="Rollback Reason"
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
                         margin="normal"
-                        helperText={`Enter the ${operationType} ID to rollback`}
+                        multiline
+                        rows={2}
+                        required
+                        helperText="Please provide a reason for this rollback"
                     />
                 </DialogContent>
                 <DialogActions>
@@ -148,12 +150,58 @@ export const RollbackDialog = () => {
                         onClick={handleRollback}
                         variant="contained"
                         color="error"
-                        disabled={!recordId}
+                        disabled={!recordId || !reason}
                     >
                         Rollback {operationType}
                     </MuiButton>
                 </DialogActions>
             </Dialog>
         </>
+    );
+};
+
+// Rollback List View
+export const RollbackList = () => {
+
+    const ListActions = () => (
+        <TopToolbar>
+            <RollbackDialog />
+        </TopToolbar>
+    );
+
+    return (
+        <List actions={<ListActions />} perPage={25} sort={{ field: 'createdAt', order: 'DESC' }}>
+            <Datagrid bulkActionButtons={false}>
+                <TextField source="transactionId" label="Transaction ID" />
+                <FunctionField
+                    label="Operation"
+                    render={(record: any) => (
+                        <Chip
+                            label={record.originalOperation}
+                            color={record.originalOperation === 'disbursement' ? 'primary' : 'secondary'}
+                            size="small"
+                        />
+                    )}
+                />
+                <FunctionField
+                    label="Reason"
+                    render={(record: any) => record.rollbackReason || '-'}
+                />
+                <TextField source="rolledBackBy" label="Rolled Back By" />
+                <DateField source="rollbackTimestamp" label="Rollback Date" showTime />
+                <FunctionField
+                    label="Error Details"
+                    render={(record: any) => (
+                        record.errorDetails ? (
+                            <Box sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {record.errorDetails.message || 'Error occurred'}
+                            </Box>
+                        ) : (
+                            <span>-</span>
+                        )
+                    )}
+                />
+            </Datagrid>
+        </List>
     );
 };

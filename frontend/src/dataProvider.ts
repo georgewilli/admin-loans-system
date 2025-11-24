@@ -1,6 +1,7 @@
 import { fetchUtils, DataProvider } from 'react-admin';
 
-const apiUrl = 'http://localhost:3000';
+const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:3000';
+
 
 const httpClient = (url: string, options: fetchUtils.Options = {}) => {
     const auth = JSON.parse(localStorage.getItem('auth') || '{}');
@@ -57,9 +58,16 @@ export const dataProvider: DataProvider = {
         httpClient(`${apiUrl}/${resource}`, {
             method: 'POST',
             body: JSON.stringify(params.data),
-        }).then(({ json }) => ({
-            data: json,
-        })),
+        }).then(({ json }) => {
+            // Backend returns { loan }, { disbursement }, etc.
+            // Extract the actual data object
+            const dataKey = Object.keys(json).find(key =>
+                typeof json[key] === 'object' && json[key] !== null
+            );
+            const data = dataKey ? json[dataKey] : json;
+
+            return { data };
+        }),
 
     update: (resource, params) => {
         // Payments, disbursements, and repayments are immutable
@@ -90,8 +98,8 @@ export const dataProvider: DataProvider = {
     },
 
     delete: (resource, params) => {
-        // Payments, disbursements, and repayments are immutable
-        if (resource === 'payments' || resource === 'disbursements' || resource === 'repayments') {
+        // Payments, disbursements, repayments, and loans are immutable
+        if (resource === 'payments' || resource === 'disbursements' || resource === 'repayments' || resource === 'loans') {
             return Promise.reject(new Error(`${resource} are immutable and cannot be deleted`));
         }
 
@@ -101,8 +109,8 @@ export const dataProvider: DataProvider = {
     },
 
     deleteMany: (resource, params) => {
-        // Payments, disbursements, and repayments are immutable
-        if (resource === 'payments' || resource === 'disbursements' || resource === 'repayments') {
+        // Payments, disbursements, repayments, and loans are immutable
+        if (resource === 'payments' || resource === 'disbursements' || resource === 'repayments' || resource === 'loans') {
             return Promise.reject(new Error(`${resource} are immutable and cannot be deleted`));
         }
 

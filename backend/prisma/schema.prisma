@@ -56,6 +56,7 @@ enum RepaymentScheduleStatus {
   PENDING
   PAID
   PARTIALLY_PAID
+  ROLLED_BACK
 }
 
 enum TransactionType {
@@ -81,6 +82,50 @@ enum OperationType {
   ROLLBACK
   MANUAL_ROLLBACK_DISBURSEMENT
   MANUAL_ROLLBACK_PAYMENT
+}
+
+enum AuditEventType {
+  // Authentication & Authorization
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  LOGOUT
+  PASSWORD_CHANGE
+  PASSWORD_RESET
+  PERMISSION_DENIED
+  
+  // User Management
+  USER_CREATED
+  USER_UPDATED
+  USER_DELETED
+  ROLE_CHANGED
+  
+  // Loan Lifecycle
+  LOAN_CREATED
+  LOAN_APPROVED
+  LOAN_REJECTED
+  LOAN_DISBURSED
+  LOAN_CLOSED
+  LOAN_UPDATED
+  
+  // Disbursements
+  DISBURSEMENT_INITIATED
+  DISBURSEMENT_COMPLETED
+  DISBURSEMENT_FAILED
+  DISBURSEMENT_ROLLED_BACK
+  
+  // Payments
+  PAYMENT_RECEIVED
+  PAYMENT_PROCESSED
+  PAYMENT_FAILED
+  
+  // Data Access
+  SENSITIVE_DATA_VIEWED
+  REPORT_GENERATED
+  DATA_EXPORTED
+  
+  // System Events
+  SYSTEM_ERROR
+  CONFIG_CHANGED
 }
 
 
@@ -174,15 +219,45 @@ model Payment {
 
 model AuditLog {
   id            String   @id @default(uuid())
+  timestamp     DateTime @default(now())
+  
+  // Who & Where (User Context)
+  userId        String?  @map("user_id")
+  userEmail     String?  @map("user_email")
+  userRole      String?  @map("user_role")
+  ipAddress     String?  @map("ip_address") @db.VarChar(45)  // IPv6 max length
+  userAgent     String?  @map("user_agent") @db.VarChar(255)
+  sessionId     String?  @map("session_id")
+  
+  // What (Event Details)
+  eventType     AuditEventType? @map("event_type")  // Optional for backward compatibility
+  action        String?         @db.VarChar(20)      // CREATE, READ, UPDATE, DELETE, EXECUTE
+  resource      String?         @db.VarChar(50)      // Loan, Payment, User, etc.
+  resourceId    String?         @map("resource_id")  // Specific resource ID
+  
+  // Changes (Before/After State)
+  oldValues     Json?    @map("old_values")  // State before change
+  newValues     Json?    @map("new_values")  // State after change
+  
+  // Context (Existing fields - keep for backward compatibility)
   transactionId String   @map("transaction_id")
   operation     String   @db.VarChar(50)
-  level         LogLevel @default(INFO)
   service       String   @default("system") @db.VarChar(20)
-  userId        String?  @map("user_id")
-  duration      Int?     // milliseconds
+  level         LogLevel @default(INFO)
+  
+  // Result
+  success       Boolean  @default(true)
+  errorMessage  String?  @map("error_message") @db.Text
+  
+  // Metadata
   metadata      Json?
-  createdAt     DateTime @default(now()) @map("created_at")
+  duration      Int?     // milliseconds
+  createdAt     DateTime @default(now()) @map("created_at")  // Keep for backward compatibility
 
+  @@index([userId])
+  @@index([eventType])
+  @@index([resource, resourceId])
+  @@index([timestamp])
   @@index([transactionId])
   @@index([service])
   @@index([level])

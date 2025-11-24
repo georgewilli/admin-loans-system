@@ -44,7 +44,12 @@ export const LoanList = () => (
 export const LoanCreate = () => (
     <Create>
         <SimpleForm>
-            <ReferenceInput source="accountId" reference="accounts" label="Account">
+            <ReferenceInput
+                source="accountId"
+                reference="accounts"
+                label="Account"
+                filter={{ type: 'USER' }}
+            >
                 <SelectInput optionText={(record) => `${record.user?.name || record.id} (Balance: $${record.balance})`} />
             </ReferenceInput>
             <NumberInput source="amount" required />
@@ -67,7 +72,8 @@ const ApproveLoanButton = () => {
             const auth = JSON.parse(localStorage.getItem('auth') || '{}');
             const token = auth.access_token;
 
-            await fetchUtils.fetchJson(`http://localhost:3000/loans/${record.id}/status`, {
+            const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+            await fetchUtils.fetchJson(`${apiUrl}/loans/${record.id}/status`, {
                 method: 'PATCH',
                 body: JSON.stringify({ status: 'APPROVED' }),
                 headers: new Headers({

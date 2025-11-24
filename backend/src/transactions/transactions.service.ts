@@ -1,50 +1,38 @@
 import { Injectable } from '@nestjs/common';
-import { CreateTransactionDto } from './dto/create-transaction.dto';
-import { UpdateTransactionDto } from './dto/update-transaction.dto';
 import { PrismaTransactionalClient } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class TransactionsService {
-  create(createTransactionDto: CreateTransactionDto) {
-    return 'This action adds a new transaction';
-  }
-
-  findAll() {
-    return `This action returns all transactions`;
-  }
-
-  findOne(id: number) {
-    return `This action returns a #${id} transaction`;
-  }
-
-  update(id: number, _updateTransactionDto: UpdateTransactionDto) {
-    return `This action updates a #${id} transaction`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} transaction`;
-  }
-
-  async getAvailableFunds(tx: PrismaTransactionalClient) {
-    const grouped = await tx.transaction.groupBy({
+  /**
+   * Calculate available funds by summing all transaction amounts
+   * 
+   * Transaction amounts are:
+   * - Positive for inflows (REPAYMENT, ADDING_FUNDS)
+   * - Negative for outflows (DISBURSEMENT)
+   * 
+   * Available funds = Total Inflows - Total Outflows
+   */
+  async getAvailableFunds(tx: PrismaTransactionalClient): Promise<number> {
+    const transactionsByType = await tx.transaction.groupBy({
       by: ['type'],
       _sum: { amount: true },
     });
 
-    let inflow = 0;
-    let outflow = 0;
+    let totalInflow = 0;
+    let totalOutflow = 0;
 
-    for (const row of grouped) {
-      const sum = Number(row._sum.amount ?? 0);
+    for (const group of transactionsByType) {
+      const amount = Number(group._sum.amount ?? 0);
 
-      if (row.type === 'DISBURSEMENT') {
-        outflow += sum;
+      if (group.type === 'DISBURSEMENT') {
+        // Disbursements are stored as negative amounts (money going out)
+        totalOutflow += amount;
       } else {
-        // FUNDING, REPAYMENT, etc.
-        inflow += sum;
+        // Repayments and funding are positive (money coming in)
+        totalInflow += amount;
       }
     }
 
-    return inflow - outflow;
+    return totalInflow - totalOutflow;
   }
 }

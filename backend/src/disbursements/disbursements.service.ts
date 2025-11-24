@@ -16,6 +16,7 @@ import {
   OperationType,
 } from '@prisma/client';
 import { LoggerService } from 'src/logger/logger.service';
+import { DISBURSEMENT_CONSTANTS } from 'src/constants';
 
 @Injectable()
 export class DisbursementsService {
@@ -84,8 +85,7 @@ export class DisbursementsService {
       ? new Date(dto.disbursementDate)
       : new Date();
 
-    // 1) Create disbursement with status 'pending'
-    // 1) Create disbursement with status 'pending'
+    // Create disbursement with status 'pending'
     let disbursement;
     try {
       disbursement = await this.prismaService.disbursement.create({
@@ -203,7 +203,9 @@ export class DisbursementsService {
             {
               tenor: loan.tenor,
               firstPaymentDate: new Date(
-                disbursementDate.getTime() + 30 * 24 * 60 * 60 * 1000,
+                disbursementDate.getTime() +
+                DISBURSEMENT_CONSTANTS.DAYS_UNTIL_FIRST_PAYMENT *
+                DISBURSEMENT_CONSTANTS.MILLISECONDS_PER_DAY,
               )
                 .toISOString()
                 .split('T')[0],
@@ -246,6 +248,23 @@ export class DisbursementsService {
           where: { id: disbursement.id },
           data: { status: DisbursementStatus.COMPLETED },
         });
+
+        // LOG: Enhanced audit - Disbursement completed
+        await this.accountsService['auditService']?.logBusinessEvent({
+          eventType: 'DISBURSEMENT_COMPLETED' as any,
+          resource: 'Disbursement',
+          resourceId: disbursement.id,
+          userId: loan.accountId,
+          transactionId: disbursement.id,
+          success: true,
+          metadata: {
+            loanId,
+            amount: Number(dto.amount),
+            oldStatus: DisbursementStatus.PENDING,
+            newStatus: DisbursementStatus.COMPLETED,
+            scheduleCount: schedules.length,
+          },
+        }).catch(err => console.error('Audit logging failed:', err));
 
         // LOG: Transaction End
         const totalDuration = Date.now() - startTime;
@@ -293,6 +312,7 @@ export class DisbursementsService {
         await this.rollbackService.rollbackDisbursement(
           disbursement.id,
           'SYSTEM_AUTO',
+          `System rollback due to post-commit error: ${postCommitError.message}`,
         );
 
         throw new Error(
