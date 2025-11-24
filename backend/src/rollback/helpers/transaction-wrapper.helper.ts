@@ -37,7 +37,7 @@ export class TransactionWrapper {
 
         return result;
       });
-    } catch (error) {
+    } catch (error: any) {
       // Transaction automatically rolled back by Prisma
       // Log the rollback event with available information
 

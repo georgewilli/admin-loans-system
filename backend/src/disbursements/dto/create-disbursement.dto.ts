@@ -1,4 +1,4 @@
-import { IsNumber, IsPositive, IsString, IsOptional } from 'class-validator';
+import { IsNumber, IsPositive, IsString, IsOptional, IsDateString } from 'class-validator';
 
 export class CreateDisbursementDto {
   @IsNumber()
@@ -6,7 +6,7 @@ export class CreateDisbursementDto {
   amount: number;
 
   @IsOptional()
-  @IsString()
+  @IsDateString()
   disbursementDate?: string; // ISO date
 
   @IsOptional()

@@ -3,20 +3,20 @@ import {
   Get,
   Post,
   Body,
-  Patch,
   Param,
-  Delete,
   UseGuards,
 } from '@nestjs/common';
 import { DisbursementsService } from './disbursements.service';
 import { CreateDisbursementDto } from './dto/create-disbursement.dto';
-import { UpdateDisbursementDto } from './dto/update-disbursement.dto';
 import { JwtAuthGuard } from 'src/auth/jwt/jwt.guard';
+import { RolesGuard } from 'src/auth/roles.guard';
+import { Roles } from 'src/auth/roles.decorator';
+import { Role } from '@prisma/client';
 
 @Controller('disbursements')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class DisbursementsController {
-  constructor(private readonly disbursementsService: DisbursementsService) {}
+  constructor(private readonly disbursementsService: DisbursementsService) { }
 
   // @Post()
   // create(@Body() createDisbursementDto: CreateDisbursementDto) {
@@ -34,6 +34,7 @@ export class DisbursementsController {
   }
 
   @Post(':id/disburse')
+  @Roles(Role.ADMIN)
   async disburseLoan(
     @Param('id') loanId: string,
     @Body() dto: CreateDisbursementDto,

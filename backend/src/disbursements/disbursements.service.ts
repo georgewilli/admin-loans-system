@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { CreateDisbursementDto } from './dto/create-disbursement.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { TransactionsService } from 'src/transactions/transactions.service';
@@ -27,7 +27,7 @@ export class DisbursementsService {
     private rollbackService: RollbackService,
     private accountsService: AccountsService,
     private logger: LoggerService,
-  ) {}
+  ) { }
 
   async findAll() {
     return this.disbursementsRepository.findAll();
@@ -85,14 +85,23 @@ export class DisbursementsService {
       : new Date();
 
     // 1) Create disbursement with status 'pending'
-    const disbursement = await this.prismaService.disbursement.create({
-      data: {
-        loanId,
-        amount: dto.amount,
-        disbursementDate,
-        status: DisbursementStatus.PENDING,
-      },
-    });
+    // 1) Create disbursement with status 'pending'
+    let disbursement;
+    try {
+      disbursement = await this.prismaService.disbursement.create({
+        data: {
+          loanId,
+          amount: dto.amount,
+          disbursementDate,
+          status: DisbursementStatus.PENDING,
+        },
+      });
+    } catch (error: any) {
+      if (error.code === 'P2002') {
+        throw new ConflictException('Disbursement already exists for this loan');
+      }
+      throw error;
+    }
 
     // LOG: Transaction Start
     this.logger.logTransactionStart({
@@ -115,7 +124,6 @@ export class DisbursementsService {
         OperationType.DISBURSEMENT,
         async (tx) => {
           // LOG: Idempotency Check
-          const idempotencyStart = Date.now();
           this.logger.debug({
             service: 'disbursement',
             operation: 'checkIdempotency',
@@ -229,7 +237,7 @@ export class DisbursementsService {
       );
 
       // Extract results from wrapped transaction
-      const { transaction, updatedLoan, schedules } = wrappedResult;
+      const { updatedLoan, schedules } = wrappedResult;
 
       // 3) Post-commit operations - wrap in try-catch for explicit rollback handling
       try {
@@ -268,7 +276,7 @@ export class DisbursementsService {
           loan: updatedLoan,
           scheduleCount: schedules.length,
         };
-      } catch (postCommitError) {
+      } catch (postCommitError: any) {
         // Post-commit failure: transaction succeeded but error occurred after
         // Need to manually rollback the disbursement
         this.logger.error(
@@ -291,7 +299,7 @@ export class DisbursementsService {
           `Disbursement failed after transaction commit and was rolled back: ${postCommitError.message}`,
         );
       }
-    } catch (error) {
+    } catch (error: any) {
       // LOG: Error with full context
       const totalDuration = Date.now() - startTime;
       this.logger.error(

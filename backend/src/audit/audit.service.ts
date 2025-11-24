@@ -16,7 +16,7 @@ export interface AuditEntry {
 
 @Injectable()
 export class AuditService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   async logAudit(params: {
     transactionId: string;
@@ -41,7 +41,8 @@ export class AuditService {
       });
     } catch (error) {
       // Silently fail to prevent logging from breaking the application
-      console.error('Failed to write audit log to database:', error.message);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Failed to write audit log to database:', errorMessage);
     }
   }
 

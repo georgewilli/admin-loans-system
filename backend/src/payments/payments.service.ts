@@ -8,12 +8,13 @@ import { RollbackService } from 'src/rollback/rollback.service';
 import { TransactionWrapper } from 'src/rollback/helpers/transaction-wrapper.helper';
 import { AccountsService } from 'src/accounts/accounts.service';
 import {
-  AccountType,
   LoanStatus,
   RepaymentScheduleStatus,
   PaymentStatus,
   TransactionType,
   OperationType,
+  Payment,
+  Transaction,
 } from '@prisma/client';
 import { LoggerService } from 'src/logger/logger.service';
 
@@ -27,7 +28,7 @@ export class PaymentsService {
     private rollbackService: RollbackService,
     private accountsService: AccountsService,
     private logger: LoggerService,
-  ) {}
+  ) { }
 
   async findAll() {
     return this.paymentsRepository.findAll();
@@ -121,7 +122,7 @@ export class PaymentsService {
           // ========================================
           const daysSinceLastPayment = Math.floor(
             (paymentDate.getTime() - lastPaymentDate.getTime()) /
-              (1000 * 60 * 60 * 24),
+            (1000 * 60 * 60 * 24),
           );
 
           const annualRate = Number(loan.interestRate) / 100; // Convert to decimal
@@ -185,8 +186,8 @@ export class PaymentsService {
           // ========================================
 
           let remainingAccruedInterest = totalAccruedInterest;
-          const payments: any[] = [];
-          const transactions: any[] = [];
+          const payments: Payment[] = [];
+          const transactions: Transaction[] = [];
           let totalPrincipalPaid = 0;
           let totalLateFee = 0;
 
@@ -197,7 +198,7 @@ export class PaymentsService {
               0,
               Math.floor(
                 (paymentDate.getTime() - dueDate.getTime()) /
-                  (1000 * 60 * 60 * 24),
+                (1000 * 60 * 60 * 24),
               ),
             );
             const lateFee = daysLate > 0 ? FLAT_LATE_FEE : 0;
@@ -406,7 +407,7 @@ export class PaymentsService {
           };
         },
       );
-    } catch (error) {
+    } catch (error: any) {
       const totalDuration = Date.now() - startTime;
       this.logger.error(
         {

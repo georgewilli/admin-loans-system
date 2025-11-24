@@ -10,11 +10,11 @@ import { LoggerService } from './logger.service';
 
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
-  constructor(private readonly loggerService: LoggerService) {}
+  constructor(private readonly loggerService: LoggerService) { }
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest();
-    const { method, url, body, user } = request;
+    const { method, url, body, user } = request as any;
     const startTime = Date.now();
 
     // Log request start
@@ -45,7 +45,7 @@ export class LoggingInterceptor implements NestInterceptor {
           },
         });
       }),
-      catchError((error) => {
+      catchError((error: any) => {
         // Log error response
         const duration = Date.now() - startTime;
         this.loggerService.error(

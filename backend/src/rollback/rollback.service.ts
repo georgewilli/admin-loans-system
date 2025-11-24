@@ -16,6 +16,8 @@ import {
   RepaymentScheduleStatus,
   OperationType,
 } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+
 
 @Injectable()
 export class RollbackService {
@@ -24,7 +26,7 @@ export class RollbackService {
     private rollbackRepository: RollbackRepository,
     private auditService: AuditService,
     private accountsService: AccountsService,
-  ) {}
+  ) { }
 
   /**
    * Log a transaction rollback event when Prisma transaction fails
@@ -250,16 +252,15 @@ export class RollbackService {
     });
   }
 
-  /**
-   * Get rollback records history
-   */
+
+
   async getRollbackRecords(filters?: {
     transactionId?: string;
-    operation?: string;
+    operation?: OperationType;
     dateFrom?: Date;
     dateTo?: Date;
   }): Promise<RollbackRecord[]> {
-    const where: any = {};
+    const where: Prisma.RollbackRecordWhereInput = {};
 
     if (filters) {
       if (filters.transactionId) where.transactionId = filters.transactionId;

@@ -8,11 +8,6 @@ import { RepaymentsModule } from 'src/repayments/repayments.module';
 import { RollbackModule } from 'src/rollback/rollback.module';
 import { AccountsModule } from 'src/accounts/accounts.module';
 import { LoggerModule } from 'src/logger/logger.module';
-import { RepaymentCalculationService } from './services/repayment-calculation.service';
-import { PaymentAllocationService } from './services/payment-allocation.service';
-import { PaymentDataService } from './services/payment-data.service';
-import { PaymentPersistenceService } from './services/payment-persistence.service';
-import { TotalDueCalculatorService } from './services/total-due-calculator.service';
 
 @Module({
   imports: [
@@ -27,11 +22,6 @@ import { TotalDueCalculatorService } from './services/total-due-calculator.servi
   providers: [
     PaymentsService,
     PaymentsRepository,
-    RepaymentCalculationService,
-    PaymentAllocationService,
-    PaymentDataService,
-    PaymentPersistenceService,
-    TotalDueCalculatorService,
   ],
 })
-export class PaymentsModule {}
+export class PaymentsModule { }

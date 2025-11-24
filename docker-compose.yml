@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # Database Service (PostgreSQL)
+  postgres:
+    image: postgres:15-alpine
+    container_name: loans_postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: adminpassword
+      POSTGRES_DB: loans_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Backend Service (NestJS)
+  backend:
+    build: ./backend
+    container_name: loans_backend
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "postgresql://admin:adminpassword@postgres:5432/loans_db?schema=public"
+      # JWT_SECRET should be set here or in .env
+      JWT_SECRET: "dev_secret_key_change_in_prod"
+    depends_on:
+      - postgres
+    restart: always
+
+  # Frontend Service (React + Nginx)
+  frontend:
+    build: ./frontend
+    container_name: loans_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always
+
+volumes:
+  postgres_data:

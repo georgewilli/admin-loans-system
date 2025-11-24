@@ -117,6 +117,40 @@ export class LoggerService {
   }
 
   /**
+   * Sanitize sensitive data from objects
+   */
+  private sanitize(obj: any): any {
+    if (!obj) return obj;
+    if (typeof obj !== 'object') return obj;
+
+    if (Array.isArray(obj)) {
+      return obj.map((item) => this.sanitize(item));
+    }
+
+    const sensitiveKeys = [
+      'password',
+      'token',
+      'secret',
+      'authorization',
+      'cookie',
+      'access_token',
+      'refresh_token',
+    ];
+
+    const sanitized = { ...obj };
+
+    for (const key of Object.keys(sanitized)) {
+      if (sensitiveKeys.some((s) => key.toLowerCase().includes(s))) {
+        sanitized[key] = '***REDACTED***';
+      } else if (typeof sanitized[key] === 'object') {
+        sanitized[key] = this.sanitize(sanitized[key]);
+      }
+    }
+
+    return sanitized;
+  }
+
+  /**
    * Create a structured log entry
    */
   private createLogEntry(
@@ -136,7 +170,7 @@ export class LoggerService {
     if (context.transactionId) entry.transactionId = context.transactionId;
     if (context.userId) entry.userId = context.userId;
     if (duration !== undefined) entry.duration = duration;
-    if (context.metadata) entry.metadata = context.metadata;
+    if (context.metadata) entry.metadata = this.sanitize(context.metadata);
 
     if (error) {
       if (error instanceof Error) {
@@ -146,7 +180,7 @@ export class LoggerService {
           code: (error as any).code,
         };
       } else {
-        entry.error = error;
+        entry.error = this.sanitize(error);
       }
     }
 
@@ -174,7 +208,7 @@ export class LoggerService {
       metadata: { ...context.metadata, ...metadata },
     });
     this.logger.info(entry);
-    this.writeToDatabase(entry);
+    void this.writeToDatabase(entry);
   }
 
   /**
@@ -186,7 +220,7 @@ export class LoggerService {
       metadata: { ...context.metadata, ...metadata },
     });
     this.logger.warn(entry);
-    this.writeToDatabase(entry);
+    void this.writeToDatabase(entry);
   }
 
   /**
@@ -208,7 +242,7 @@ export class LoggerService {
       error,
     );
     this.logger.error(entry);
-    this.writeToDatabase(entry);
+    void this.writeToDatabase(entry);
   }
 
   /**
@@ -243,7 +277,7 @@ export class LoggerService {
       duration,
     );
     this.logger.info(entry);
-    this.writeToDatabase(entry);
+    void this.writeToDatabase(entry);
   }
 
   /**

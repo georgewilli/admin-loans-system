@@ -4,12 +4,12 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { AccountsRepository } from './accounts.repository';
-import { Prisma } from '@prisma/client';
+
 import { PrismaTransactionalClient } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class AccountsService {
-  constructor(private accountsRepository: AccountsRepository) {}
+  constructor(private accountsRepository: AccountsRepository) { }
 
   async getAllAccounts() {
     return this.accountsRepository.findAll();

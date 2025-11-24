@@ -1,14 +1,15 @@
 import { Controller, Get, Post, Param, Query, Request } from '@nestjs/common';
 import { RollbackService } from './rollback.service';
+import { OperationType } from '@prisma/client';
 
 @Controller('rollback')
 export class RollbackController {
-  constructor(private rollbackService: RollbackService) {}
+  constructor(private rollbackService: RollbackService) { }
 
   // React Admin compatible endpoint for list view
   @Get()
   async getRollbacks(
-    @Query('operation') operation?: string,
+    @Query('operation') operation?: OperationType,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
   ) {
@@ -24,7 +25,7 @@ export class RollbackController {
 
   @Get('records')
   async getRollbackRecords(
-    @Query('operation') operation?: string,
+    @Query('operation') operation?: OperationType,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
   ) {
@@ -37,7 +38,7 @@ export class RollbackController {
 
   @Post('disbursement/:id')
   async rollbackDisbursement(@Param('id') id: string, @Request() req: any) {
-    const adminUserId = req.user?.id || 'ADMIN';
+    const adminUserId = (req.user?.id as string) || 'ADMIN';
     await this.rollbackService.rollbackDisbursement(id, adminUserId);
     return {
       message: 'Disbursement rolled back successfully',
@@ -47,7 +48,7 @@ export class RollbackController {
 
   @Post('payment/:id')
   async rollbackPayment(@Param('id') id: string, @Request() req: any) {
-    const adminUserId = req.user?.id || 'ADMIN';
+    const adminUserId = (req.user?.id as string) || 'ADMIN';
     await this.rollbackService.rollbackPayment(id, adminUserId);
     return { message: 'Payment rolled back successfully', paymentId: id };
   }
