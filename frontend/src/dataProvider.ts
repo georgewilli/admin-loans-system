@@ -20,11 +20,33 @@ const httpClient = (url: string, options: fetchUtils.Options = {}) => {
 
 export const dataProvider: DataProvider = {
     getList: (resource, params) => {
-        const url = `${apiUrl}/${resource}`;
-        return httpClient(url).then(({ json }) => ({
-            data: json,
-            total: json.length,
-        }));
+        const page = params.pagination?.page || 1;
+        const perPage = params.pagination?.perPage || 50;
+
+        const query = {
+            page: page.toString(),
+            limit: perPage.toString(),
+        };
+
+        const url = `${apiUrl}/${resource}?${fetchUtils.queryParameters(query)}`;
+
+        return httpClient(url).then(({ json }) => {
+            // Backend now returns paginated response: { data, total, page, pageSize, totalPages }
+            // Check if it's the new format or old format (for backwards compatibility)
+            if (json.data && json.total !== undefined) {
+                // New paginated format
+                return {
+                    data: json.data,
+                    total: json.total,
+                };
+            } else {
+                // Old format (fallback for endpoints not yet paginated)
+                return {
+                    data: json,
+                    total: json.length,
+                };
+            }
+        });
     },
 
     getOne: (resource, params) =>

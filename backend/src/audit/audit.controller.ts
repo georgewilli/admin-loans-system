@@ -1,14 +1,30 @@
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { AuditService } from './audit.service';
 import { JwtAuthGuard } from '../auth/jwt/jwt.guard';
+import { Roles } from 'src/auth/roles.decorator';
+import { Role } from '@prisma/client';
+import { RolesGuard } from 'src/auth/roles.guard';
 
+@ApiTags('Audit Logs')
+@ApiBearerAuth('JWT-auth')
 @Controller('audit-logs')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class AuditController {
     constructor(private readonly auditService: AuditService) { }
 
     @Get()
+    @Roles(Role.ADMIN)
+    @ApiOperation({
+        summary: 'Get audit logs',
+        description: 'Retrieve system audit trail with filtering and pagination (Admin only)'
+    })
+    @ApiQuery({ name: 'filter', required: false, type: String, description: 'JSON filter object' })
+    @ApiQuery({ name: 'range', required: false, type: String, description: 'JSON range array [start, end]' })
+    @ApiQuery({ name: 'sort', required: false, type: String, description: 'JSON sort array [field, order]' })
+    @ApiResponse({ status: 200, description: 'Audit logs retrieved successfully' })
+    @ApiResponse({ status: 403, description: 'Admin access required' })
     async findAll(
         @Query('filter') filter: string,
         @Query('range') range: string,

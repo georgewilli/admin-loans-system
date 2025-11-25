@@ -160,6 +160,8 @@ model Loan {
   payments     Payment[]
 
   @@index([accountId])
+  @@index([status])
+  @@index([accountId, status])
   @@map("loans")
 }
 
@@ -176,6 +178,7 @@ model Disbursement {
   transaction Transaction? @relation(fields: [transactionId], references: [id])
   transactionId String?    @unique @map("transaction_id")
 
+  @@index([status])
   @@map("disbursements")  
 }
 
@@ -192,6 +195,8 @@ model RepaymentSchedule {
   loan              Loan      @relation(fields: [loanId], references: [id])
   payments          Payment[]
 
+  @@index([loanId, status])
+  @@index([dueDate])
   @@map("repayment_schedules")
 }
 
@@ -214,6 +219,8 @@ model Payment {
 
   @@index([loanId])
   @@index([paymentDate])
+  @@index([loanId, status])
+  @@index([repaymentScheduleId, status])
   @@map("payments")
 }
 

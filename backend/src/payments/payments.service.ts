@@ -296,12 +296,24 @@ export class PaymentsService {
 
             // Distribute Principal (Waterfall: fill oldest first)
             if (distributedPrincipal < principalPaid) {
-              const repPrincipalBalance = Number(rep.principalAmount); // In a real system, check 'paidAmount' if partially paid before
-              // Assuming 'principalAmount' is the full amount. If it was partially paid, we need to know how much is left.
-              // The schema has 'status', but doesn't track 'outstandingPrincipal' per schedule explicitly other than via payments.
-              // We'll assume 'principalAmount' is the target.
-              // TODO: If previously partially paid, we need to deduct that.
-              // For simplicity/MVP, assuming we pay full 'principalAmount' or whatever is left.
+              // Get previously paid principal for this schedule
+              const previousPayments = await tx.payment.findMany({
+                where: {
+                  repaymentScheduleId: rep.id,
+                  status: PaymentStatus.COMPLETED,
+                },
+                select: {
+                  principalPaid: true,
+                },
+              });
+
+              const previouslyPaidPrincipal = previousPayments.reduce(
+                (sum, p) => sum + Number(p.principalPaid),
+                0
+              );
+
+              // Calculate remaining principal balance for this schedule
+              const repPrincipalBalance = Number(rep.principalAmount) - previouslyPaidPrincipal;
 
               const amountToPay = Math.min(
                 repPrincipalBalance,

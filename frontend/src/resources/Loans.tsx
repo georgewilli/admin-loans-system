@@ -18,24 +18,60 @@ import {
     useRefresh,
     ReferenceInput,
     SelectInput,
-    ReferenceField,
+    FunctionField,
+    Link,
+    useRedirect,
 } from 'react-admin';
 import { fetchUtils } from 'react-admin';
+
+// View Repayments Button
+const ViewRepaymentsButton = () => {
+    const record = useRecordContext();
+    const redirect = useRedirect();
+
+    if (!record || record.status !== 'ACTIVE') return null;
+
+    return (
+        <Button
+            label="View Repayments"
+            onClick={(e) => {
+                e.stopPropagation();
+                redirect('list', 'repayments', undefined, undefined, { loanId: record.id });
+            }}
+        />
+    );
+};
 
 // Loan List
 export const LoanList = () => (
     <List>
         <Datagrid rowClick="show">
             <TextField source="id" />
-            <ReferenceField source="accountId" reference="accounts" label="Account">
-                <TextField source="id" />
-            </ReferenceField>
+            <FunctionField
+                label="Account"
+                render={(record: any) => {
+                    const accountId = record.account?.id || record.accountId;
+                    const displayName = record.account?.user?.name ||
+                        record.account?.user?.email ||
+                        accountId;
+
+                    return (
+                        <Link
+                            to={`/accounts/${accountId}/show`}
+                            onClick={(e: any) => e.stopPropagation()}
+                        >
+                            {displayName}
+                        </Link>
+                    );
+                }}
+            />
             <NumberField source="amount" options={{ style: 'currency', currency: 'USD' }} />
             <NumberField source="interestRate" label="Interest Rate %" />
             <NumberField source="tenor" label="Tenor (months)" />
             <TextField source="status" />
             <NumberField source="outstandingPrincipal" label="Outstanding" options={{ style: 'currency', currency: 'USD' }} />
             <DateField source="createdAt" />
+            <ViewRepaymentsButton />
         </Datagrid>
     </List>
 );
@@ -101,9 +137,15 @@ export const LoanShow = () => (
     <Show>
         <SimpleShowLayout>
             <TextField source="id" />
-            <ReferenceField source="accountId" reference="accounts" label="Account">
-                <TextField source="id" />
-            </ReferenceField>
+            <FunctionField
+                label="Account"
+                render={(record: any) => {
+                    if (record.account?.user) {
+                        return `${record.account.user.name} (${record.account.user.email})`;
+                    }
+                    return record.accountId;
+                }}
+            />
             <NumberField source="amount" options={{ style: 'currency', currency: 'USD' }} />
             <NumberField source="interestRate" label="Interest Rate %" />
             <NumberField source="tenor" label="Tenor (months)" />

@@ -1,14 +1,21 @@
 import { Controller, Get, Post, Param, Query, Request, Body, Res } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBody } from '@nestjs/swagger';
 import { RollbackService } from './rollback.service';
 import { OperationType } from '@prisma/client';
 import type { Response } from 'express';
 
+@ApiTags('Rollbacks')
 @Controller('rollback')
 export class RollbackController {
   constructor(private rollbackService: RollbackService) { }
 
   // React Admin compatible endpoint for list view
   @Get()
+  @ApiOperation({ summary: 'Get rollback records', description: 'Retrieve rollback history with optional filtering' })
+  @ApiQuery({ name: 'operation', required: false, enum: OperationType, description: 'Filter by operation type' })
+  @ApiQuery({ name: 'dateFrom', required: false, type: String, description: 'Start date (ISO format)' })
+  @ApiQuery({ name: 'dateTo', required: false, type: String, description: 'End date (ISO format)' })
+  @ApiResponse({ status: 200, description: 'Rollback records retrieved successfully' })
   async getRollbacks(
     @Query('operation') operation: OperationType,
     @Query('dateFrom') dateFrom: string,
@@ -40,6 +47,11 @@ export class RollbackController {
   }
 
   @Post('disbursement/:id')
+  @ApiOperation({ summary: 'Rollback disbursement', description: 'Reverse a disbursement transaction (Admin only)' })
+  @ApiParam({ name: 'id', type: String, description: 'Disbursement ID' })
+  @ApiBody({ schema: { type: 'object', properties: { reason: { type: 'string', example: 'Error in processing' } } } })
+  @ApiResponse({ status: 201, description: 'Disbursement rolled back successfully' })
+  @ApiResponse({ status: 404, description: 'Disbursement not found' })
   async rollbackDisbursement(
     @Param('id') id: string,
     @Body('reason') reason: string,
@@ -54,6 +66,11 @@ export class RollbackController {
   }
 
   @Post('payment/:id')
+  @ApiOperation({ summary: 'Rollback payment', description: 'Reverse a payment transaction (Admin only)' })
+  @ApiParam({ name: 'id', type: String, description: 'Payment ID' })
+  @ApiBody({ schema: { type: 'object', properties: { reason: { type: 'string', example: 'Payment error' } } } })
+  @ApiResponse({ status: 201, description: 'Payment rolled back successfully' })
+  @ApiResponse({ status: 404, description: 'Payment not found' })
   async rollbackPayment(
     @Param('id') id: string,
     @Body('reason') reason: string,

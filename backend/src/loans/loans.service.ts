@@ -12,8 +12,13 @@ export class LoansService {
     private auditService: AuditService,
   ) { }
 
-  async findAll() {
-    return this.loansRepository.findAll();
+  async findAll(params?: {
+    skip?: number;
+    take?: number;
+    where?: any;
+    orderBy?: any;
+  }) {
+    return this.loansRepository.findAll(params);
   }
 
   async findOne(id: string) {

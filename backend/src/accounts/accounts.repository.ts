@@ -6,18 +6,38 @@ import { Account, AccountType } from '@prisma/client';
 export class AccountsRepository {
   constructor(private prisma: PrismaService) { }
 
-  async findAll() {
-    return this.prisma.account.findMany({
-      include: {
-        user: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      where: {
-        type: AccountType.USER,
-      },
-    });
+  async findAll(params?: {
+    skip?: number;
+    take?: number;
+    where?: any;
+    orderBy?: any;
+  }) {
+    const skip = params?.skip ?? 0;
+    const take = Math.min(params?.take ?? 50, 100);
+
+    // Don't filter by type - show all accounts including platform
+    const whereClause = params?.where || {};
+
+    const [data, total] = await Promise.all([
+      this.prisma.account.findMany({
+        skip,
+        take,
+        where: whereClause,
+        orderBy: params?.orderBy || { createdAt: 'desc' },
+        include: {
+          user: true,
+        },
+      }),
+      this.prisma.account.count({ where: whereClause }),
+    ]);
+
+    return {
+      data,
+      total,
+      page: Math.floor(skip / take) + 1,
+      pageSize: take,
+      totalPages: Math.ceil(total / take),
+    };
   }
 
   async findById(id: string): Promise<Account | null> {
@@ -49,15 +69,44 @@ export class AccountsRepository {
     return account ? Number(account.balance) : 0;
   }
 
-  async findWithUser(accountId: string) {
+  async findWithUser(
+    accountId: string,
+    options?: {
+      includeLoans?: boolean;
+      loansLimit?: number;
+      paymentsPerLoan?: number;
+    },
+  ) {
+    const includeLoans = options?.includeLoans ?? true;
+    const loansLimit = options?.loansLimit ?? 10;
+    const paymentsPerLoan = options?.paymentsPerLoan ?? 5;
+
     return this.prisma.account.findUnique({
       where: { id: accountId },
       include: {
         user: true,
-        loans: {
-          include: {
-            disbursement: true,
-            payments: true,
+        ...(includeLoans && {
+          loans: {
+            take: loansLimit,
+            orderBy: { createdAt: 'desc' },
+            include: {
+              disbursement: true,
+              payments: {
+                take: paymentsPerLoan,
+                orderBy: { paymentDate: 'desc' },
+              },
+              _count: {
+                select: {
+                  payments: true,
+                  schedules: true,
+                },
+              },
+            },
+          },
+        }),
+        _count: {
+          select: {
+            loans: true,
           },
         },
       },

@@ -264,7 +264,16 @@ export class DisbursementsService {
             newStatus: DisbursementStatus.COMPLETED,
             scheduleCount: schedules.length,
           },
-        }).catch(err => console.error('Audit logging failed:', err));
+        }).catch(err => {
+          this.logger.error(
+            {
+              service: 'disbursement',
+              operation: 'logAuditEvent',
+              transactionId: disbursement.id,
+            },
+            new Error(`Audit logging failed: ${err.message}`)
+          );
+        });
 
         // LOG: Transaction End
         const totalDuration = Date.now() - startTime;

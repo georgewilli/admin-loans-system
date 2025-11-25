@@ -6,8 +6,30 @@ import {
     NumberField,
     DateField,
     FunctionField,
+    useRecordContext,
+    Button,
+    useRedirect,
 } from 'react-admin';
 import { Chip } from '@mui/material';
+
+// View Payment Button
+const ViewPaymentButton = () => {
+    const record = useRecordContext();
+    const redirect = useRedirect();
+
+    if (!record || record.status !== 'PAID') return null;
+
+    return (
+        <Button
+            label="View Payment"
+            onClick={(e) => {
+                e.stopPropagation();
+                // Filter payments by this repayment schedule ID
+                redirect('list', 'payments', undefined, undefined, { repaymentScheduleId: record.id });
+            }}
+        />
+    );
+};
 
 // Repayment Schedule List (Read-only - Repayment schedules are immutable)
 export const RepaymentScheduleList = () => (
@@ -35,6 +57,7 @@ export const RepaymentScheduleList = () => (
             />
             <DateField source="paidDate" />
             <DateField source="createdAt" />
+            <ViewPaymentButton />
         </Datagrid>
     </List>
 );
